@@ -1,6 +1,6 @@
 {
   "name": "@quadiusai/dsh-greenharness",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "GreenHarness: a DeepSeek Harness (dsh) plugin that cuts token, GPU and dollar cost in multi-step agent workflows. Install with one command; control it with /greenharness.",
   "type": "module",
   "main": "src/index.mjs",
