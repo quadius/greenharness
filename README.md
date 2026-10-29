@@ -110,8 +110,9 @@ Each case copies the task to a fresh workspace and starts a fresh DSH home. The 
 
 These come from `bench/run-mock-suite.mjs`. The mock replays a fixed script, so these numbers show what the plugin changes in the prompt. They say nothing about a real model's pass rate. Token counts are characters divided by four, over the message history only. Token estimates shift by a few percent between installs and folder layouts, so compare the rows, tier splits and pass/fail results rather than the last digit.
 
+
 | scenario | arm | agent calls | served by | prompt tokens (est.) | cached (est.) | suite | distilled | deduped | route changes | loop denied | triage | errors |
-|---|---|---:|---|---:|---:|---|---:|---:|---:|---|---|---|---:|
+|---|---|---:|---|---:|---:|---|---:|---:|---:|---|---|---:|
 | build-horse | greenharness | 4 | 0 small / 4 large | 5665 | 2772 | 301 pass / 1 fail | 1 | 0 | 1 | no | large (0.9) | 0 |
 | build-horse | always-large | 4 | 0 small / 4 large | 8108 | 2775 | 301 pass / 1 fail | 0 | 0 | 0 | no | — | 0 |
 | build-horse | always-small | 4 | 4 small / 0 large | 8106 | 2772 | 301 pass / 1 fail | 0 | 0 | 0 | no | — | 0 |
@@ -121,6 +122,7 @@ These come from `bench/run-mock-suite.mjs`. The mock replays a fixed script, so 
 | subtract-fix | greenharness | 7 | 1 small / 6 large | 11968 | 6612 | 302 pass / 0 fail | 3 | 1 | 2 | no | large (0.9) | 0 |
 | subtract-fix | always-large | 7 | 0 small / 7 large | 33742 | 23285 | 302 pass / 0 fail | 0 | 0 | 0 | no | — | 0 |
 | subtract-fix | always-small | 7 | 7 small / 0 large | 33735 | 23286 | 302 pass / 0 fail | 0 | 0 | 0 | no | — | 0 |
+
 
 In the subtract scenario, GreenHarness sent almost 3 times fewer estimated prompt tokens than either single-model arm. In the loop scenario, it denied the repeats after three identical failures. In the build scenario, triage immediately routed the greenfield work to the strong model. The `always-*` arms have no verifier and no loop breaker, so they always run the same script to the end.
 
