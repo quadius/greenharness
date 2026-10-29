@@ -1,0 +1,68 @@
+{
+  "description": "Live NeMo models on a Brev instance, reached through port-forwards on localhost. The large tier is Nemotron 3.5 Lightning 30B-A3B (BF16). The small tier is Nemotron 3.5 Bolt E4B, whose model id, serve command and thinking switch are NOT verified; see bench/BREV.md before trusting its numbers.",
+  "mock": false,
+  "routes": {
+    "nemo-bolt-e4b": {
+      "baseURL": "http://127.0.0.1:8001/v1",
+      "api": "openai-completions",
+      "displayName": "Nemotron 3.5 Bolt E4B (Brev, unverified)",
+      "compat": {
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": {
+          "enable_thinking": {
+            "$var": "thinking.enabled"
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB",
+          "name": "Nemotron 3.5 Bolt E4B",
+          "contextWindow": 65536,
+          "reasoningEfforts": {
+            "off": null,
+            "high": "high"
+          },
+          "maxTokens": 32768
+        }
+      ]
+    },
+    "nemo-lightning-30b": {
+      "baseURL": "http://127.0.0.1:8000/v1",
+      "api": "openai-completions",
+      "displayName": "Nemotron 3.5 Lightning 30B-A3B (Brev)",
+      "compat": {
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": {
+          "enable_thinking": {
+            "$var": "thinking.enabled"
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+          "name": "Nemotron 3.5 Lightning 30B-A3B",
+          "contextWindow": 262144,
+          "reasoningEfforts": {
+            "off": null,
+            "high": "high"
+          },
+          "maxTokens": 32768
+        }
+      ]
+    }
+  },
+  "tiers": {
+    "small": {
+      "provider": "nemo-bolt-e4b",
+      "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB",
+      "reasoningEffort": "off"
+    },
+    "large": {
+      "provider": "nemo-lightning-30b",
+      "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "reasoningEffort": "high"
+    }
+  }
+}

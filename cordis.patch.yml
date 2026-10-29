@@ -1,0 +1,4 @@
+# Mounted by `dsh plugin --profile <name> add @quadiusai/dsh-greenharness`. Every setting has a default.
+- insert:
+    - id: greenharness
+      name: '@quadiusai/dsh-greenharness'

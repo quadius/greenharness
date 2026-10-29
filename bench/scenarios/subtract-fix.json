@@ -1,0 +1,12 @@
+{
+  "description": "Run the suite (fails), read the source twice (the second read should dedupe), fix subtract with an exact edit, rerun twice (passes), then finish.",
+  "steps": [
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "tool_calls": [{ "name": "read", "arguments": { "file_path": "src/math.mjs" } }] },
+    { "tool_calls": [{ "name": "read", "arguments": { "file_path": "src/math.mjs" } }] },
+    { "tool_calls": [{ "name": "edit", "arguments": { "file_path": "src/math.mjs", "old_string": "export function subtract(a, b) {\n  return a + b", "new_string": "export function subtract(a, b) {\n  return a - b" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "content": "Fixed subtract to return a - b. All tests pass." }
+  ]
+}

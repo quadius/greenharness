@@ -1,0 +1,11 @@
+{
+  "description": "Keep re-running a failing command with no edits. The loop breaker should deny the repeat after three identical failures.",
+  "steps": [
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the test suite" } }] },
+    { "content": "Stopping: the tests keep failing." }
+  ]
+}

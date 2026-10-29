@@ -1,0 +1,68 @@
+{
+  "description": "Lightning 30B-A3B as the small tier and Nemotron 3.5 Super VL 120B-A12B (NVFP4, one H200) as the large tier, both on Brev through port-forwards. Serve flags come from the vLLM recipe page and have not been run by us; see BREV-SETUP.md.",
+  "mock": false,
+  "routes": {
+    "nemo-lightning-30b": {
+      "baseURL": "http://127.0.0.1:8000/v1",
+      "api": "openai-completions",
+      "displayName": "Nemotron 3.5 Lightning 30B-A3B (Brev)",
+      "compat": {
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": {
+          "enable_thinking": {
+            "$var": "thinking.enabled"
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+          "name": "Nemotron 3.5 Lightning 30B-A3B",
+          "contextWindow": 262144,
+          "reasoningEfforts": {
+            "off": null,
+            "high": "high"
+          },
+          "maxTokens": 32768
+        }
+      ]
+    },
+    "nemo-super-120b": {
+      "baseURL": "http://127.0.0.1:8002/v1",
+      "api": "openai-completions",
+      "displayName": "Nemotron 3.5 Super VL 120B-A12B NVFP4 (Brev, H200)",
+      "compat": {
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": {
+          "enable_thinking": {
+            "$var": "thinking.enabled"
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+          "name": "Nemotron 3.5 Super VL 120B-A12B",
+          "contextWindow": 65536,
+          "maxTokens": 16384,
+          "reasoningEfforts": {
+            "off": null,
+            "high": "high"
+          }
+        }
+      ]
+    }
+  },
+  "tiers": {
+    "small": {
+      "provider": "nemo-lightning-30b",
+      "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "reasoningEffort": "off"
+    },
+    "large": {
+      "provider": "nemo-super-120b",
+      "model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+      "reasoningEffort": "high"
+    }
+  }
+}

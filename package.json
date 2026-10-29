@@ -1,0 +1,46 @@
+{
+  "name": "@quadiusai/dsh-greenharness",
+  "version": "0.1.6",
+  "description": "GreenHarness: a DeepSeek Harness (dsh) plugin that cuts token, GPU and dollar cost in multi-step agent workflows. Install with one command; control it with /greenharness.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "bench",
+    "cordis.patch.yml",
+    "README.md",
+    "GETTING-STARTED.md",
+    "BREV-SETUP.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "bench:mock": "node bench/run-mock-suite.mjs",
+    "bench:compare": "node bench/compare.mjs",
+    "mock-server": "node bench/mock-openai-server.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "agents",
+    "nvidia",
+    "nemotron",
+    "finops",
+    "green-ai"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "description": "The mock preset with the NeMo-style thinking switch on both routes: chat_template_kwargs.enable_thinking follows the tier's reasoning effort. It checks the request body that a chat-template server such as vLLM would receive. Still a mock, not a model.",
+  "mock": true,
+  "routes": {
+    "mock-small": {
+      "baseURL": "http://127.0.0.1:8124/v1",
+      "api": "openai-completions",
+      "displayName": "Mock small",
+      "compat": {
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": { "enable_thinking": { "$var": "thinking.enabled" } }
+      },
+      "models": [{
+        "id": "mock-bolt-e4b",
+        "name": "Mock Bolt E4B",
+        "contextWindow": 65536,
+        "reasoningEfforts": { "off": null, "high": "high" }
+      }]
+    },
+    "mock-large": {
+      "baseURL": "http://127.0.0.1:8124/v1",
+      "api": "openai-completions",
+      "displayName": "Mock large",
+      "compat": {
+        "thinkingFormat": "chat-template",
+        "chatTemplateKwargs": { "enable_thinking": { "$var": "thinking.enabled" } }
+      },
+      "models": [{
+        "id": "mock-lightning-30b",
+        "name": "Mock Lightning",
+        "contextWindow": 262144,
+        "reasoningEfforts": { "off": null, "high": "high" }
+      }]
+    }
+  },
+  "tiers": {
+    "small": { "provider": "mock-small", "model": "mock-bolt-e4b", "reasoningEffort": "off" },
+    "large": { "provider": "mock-large", "model": "mock-lightning-30b", "reasoningEffort": "high" }
+  }
+}

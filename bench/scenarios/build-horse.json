@@ -1,0 +1,9 @@
+{
+  "description": "A greenfield build with no verifier to fail. Cascade never escalates, so triage is the only mechanism that can move the first call to the large model.",
+  "steps": [
+    { "tool_calls": [{ "name": "write", "arguments": { "file_path": "index.html", "content": "<!doctype html><canvas id=c></canvas><script type=module src=./src/horse.mjs></script>" } }] },
+    { "tool_calls": [{ "name": "write", "arguments": { "file_path": "src/horse.mjs", "content": "export const horse = { legs: 4, lowPoly: true }\n" } }] },
+    { "tool_calls": [{ "name": "bash", "arguments": { "command": "node --test", "description": "Run the smoke test" } }] },
+    { "content": "Created index.html and src/horse.mjs with a low-poly horse scene." }
+  ]
+}

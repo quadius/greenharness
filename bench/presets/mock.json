@@ -1,0 +1,32 @@
+{
+  "description": "Scripted mock server on 127.0.0.1. It checks routing and context edits only; it is not a model and measures no quality.",
+  "mock": true,
+  "routes": {
+    "mock-small": {
+      "baseURL": "http://127.0.0.1:8124/v1",
+      "api": "openai-completions",
+      "displayName": "Mock small",
+      "models": [{
+        "id": "mock-bolt-e4b",
+        "name": "Mock Bolt E4B",
+        "contextWindow": 65536,
+        "reasoningEfforts": { "off": null, "high": "high" }
+      }]
+    },
+    "mock-large": {
+      "baseURL": "http://127.0.0.1:8124/v1",
+      "api": "openai-completions",
+      "displayName": "Mock large",
+      "models": [{
+        "id": "mock-lightning-30b",
+        "name": "Mock Lightning",
+        "contextWindow": 262144,
+        "reasoningEfforts": { "off": null, "high": "high" }
+      }]
+    }
+  },
+  "tiers": {
+    "small": { "provider": "mock-small", "model": "mock-bolt-e4b", "reasoningEffort": "off" },
+    "large": { "provider": "mock-large", "model": "mock-lightning-30b", "reasoningEffort": "high" }
+  }
+}
