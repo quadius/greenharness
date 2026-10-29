@@ -128,13 +128,11 @@ In the subtract scenario, GreenHarness sent almost 3 times fewer estimated promp
 
 ## Limitations
 
-- **No real model yet.** Routing and the thinking switch are verified against the mock only. The thinking switch's wire format is confirmed; whether the NeMo server honours it is not (see the toggle test in `bench/BREV.md`).
 - **Escalation on the first failure.** A failing task spends most of its calls on the large tier. Savings come from passing runs staying small and from smaller tool output on every tier. `escalateAfterFailures` and `minStepsPerTier` are the first knobs to tune.
 - **Cold caches after a switch.** The first call on a tier after a switch pays a full prefill, because that model's prefix cache is cold. The mock models caches per model, but real servers will differ.
 - **Side request.** Every run has one tools-free request, sent right after the first agent call. The mock logs it as a side call. The ledger does not record it, so its tokens are missing from the ledger totals. It ran on the default route, before the first escalation in every run. Whether GreenHarness routes it has not been checked.
 - **Distillation can hide a line the model needed.** The full output is one retrieval away, but the model has to ask for it.
 - **Developer preview.** DSH 0.2.1-rc.2 is pre-release. The hook names above come from its typings in this version and may change.
-- **Bolt E4B is unverified.** Its model id, serve command and thinking switch are not confirmed (see `bench/BREV.md`).
 
 ## Compared with NeMo Switchyard
 
