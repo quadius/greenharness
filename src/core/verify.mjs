@@ -80,6 +80,33 @@ export function classifyOutcome({ exitCode, timedOut = false, text = '' }) {
 }
 
 /**
+ * Commands that write to the workspace. A successful one is progress, so any loop streak it
+ * could not have caused is cleared: an agent is allowed to fix a test with `sed -i` and rerun.
+ */
+const MUTATING_COMMAND_RE = new RegExp([
+  String.raw`(?:^|[|;&]\s*)\s*(?:rm|mv|cp|mkdir|rmdir|touch|chmod|chown|ln|truncate|tee)\b`,
+  String.raw`\bsed\s+-i`,
+  String.raw`\bperl\s+-[a-z]*i`,
+  String.raw`(?:^|\s)>{1,2}\s*[^\s&|]`,
+  String.raw`\bgit\s+(?:apply|am|cherry-pick|checkout|switch|restore|reset|stash|commit|add|rm|mv|merge|rebase|pull)\b`,
+  String.raw`\b(?:npm|pnpm|yarn|bun)\s+(?:install|i|add|remove|uninstall|ci|update|dedupe)\b`,
+  String.raw`\b(?:pip|pip3|uv|poetry|conda)\s+(?:install|add|remove|sync)\b`,
+  String.raw`\b(?:cargo|go)\s+(?:add|get|mod|fmt|fix)\b`,
+  String.raw`\bpatch\b|\bapplypatch\b`,
+].join('|'), 'i')
+
+/**
+ * Whether one shell command may have changed files in the workspace.
+ * @param {unknown} command - the bash command text.
+ * @returns {boolean} true when the command looks like a writer.
+ */
+export function isMutatingCommand(command) {
+  const text = String(command ?? '')
+  if (text.trim() === '') return false
+  return MUTATING_COMMAND_RE.test(text)
+}
+
+/**
  * Canonical spelling of a command for keys: whitespace collapsed and trimmed.
  * @param {unknown} command - the command argument.
  * @returns {string} the normalized command, empty when absent.

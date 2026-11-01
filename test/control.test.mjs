@@ -205,10 +205,20 @@ test('benchmark command parses prompt and executes comparison', async () => {
     },
   })
 
-  const reply = await runCommand('benchmark on build-horse', host)
-  assert.equal(reply.kind, 'success')
-  assert.equal(calledWith, 'build-horse')
-  assert.match(reply.text, /REPORT for build-horse/)
+  const disabled = await runCommand('benchmark on build-horse', host)
+  assert.equal(disabled.kind, 'error')
+  assert.match(disabled.text, /GREENHARNESS_BENCH=1/)
+  assert.equal(calledWith, null, 'nothing runs without an explicit opt-in')
+
+  process.env.GREENHARNESS_BENCH = '1'
+  try {
+    const reply = await runCommand('benchmark on build-horse', host)
+    assert.equal(reply.kind, 'success')
+    assert.equal(calledWith, 'build-horse')
+    assert.match(reply.text, /REPORT for build-horse/)
+  } finally {
+    delete process.env.GREENHARNESS_BENCH
+  }
 })
 
 test('last shows a per-prompt cheap-model bar that is separate from the all-prompts total', async () => {
@@ -218,4 +228,31 @@ test('last shows a per-prompt cheap-model bar that is separate from the all-prom
   assert.match(reply.text, /cheap model: \[█{5}░{15}\] 25%/)
   assert.match(statusText(host), /LATEST PROMPT ONLY: cheap model did \[█{5}░{15}\] 25%/)
   assert.match(statusText(host), /ALL PROMPTS SINCE DSH STARTED/)
+})
+
+// === GreenHarness 0.2.0 additions ===
+test('doctor is a real command and explains what is on', async () => {
+  assert.deepEqual(parseCommand('doctor'), { action: 'doctor' })
+  assert.equal(parseCommand('doctor now').action, 'error')
+  const host = hostWith({ tiers: { small: { provider: 'p', model: 'cheap' }, large: { provider: 'p', model: 'strong', reasoningEffort: 'high' } } })
+  host.ledger = { fileFor: id => `/work/.greenharness/ledger-${id}.jsonl` }
+  const reply = await runCommand('doctor', { ...host, agent: { id: 'sess-1' } })
+  assert.equal(reply.kind, 'success')
+  assert.match(reply.text, /GREENHARNESS DOCTOR/)
+  assert.match(reply.text, /small = p\/cheap · large = p\/strong \(high\)/)
+  assert.match(reply.text, /one file per session/)
+  assert.match(reply.text, /ledger-sess-1\.jsonl/)
+  assert.match(reply.text, /Sessions holding state/)
+})
+
+test('doctor points at the missing large model instead of leaving routing idle silently', async () => {
+  const host = hostWith({ tiers: { small: { provider: 'p', model: 'cheap' } } })
+  const reply = await runCommand('doctor', host)
+  assert.match(reply.text, /Routing is idle: no large model is set/)
+})
+
+test('help documents doctor and the developer-only benchmark', async () => {
+  const reply = await runCommand('help', hostWith())
+  assert.match(reply.text, /\/greenharness doctor/)
+  assert.match(reply.text, /GREENHARNESS_BENCH=1/)
 })

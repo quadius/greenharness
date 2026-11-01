@@ -27,17 +27,20 @@ function classify(line) {
  * lines collapse to one line with a count. Output above `maxChars` keeps its head and tail.
  *
  * @param {string} raw - tool output as the model would read it.
- * @param {{ maxChars?: number, contextLines?: number }} [options] - size budget and window around failures.
+ * @param {{ maxChars?: number, contextLines?: number, requireNoise?: boolean }} [options] - size
+ *   budget, window around failures, and whether a pure truncation (nothing classified as noise)
+ *   is acceptable for outputs below four times the budget.
  * @returns {{ text: string, changed: boolean, stats: { inChars: number, outChars: number, droppedLines: number, droppedFrames: number, collapsedRepeats: number, failLines: number, elidedChars: number } }}
  *   `changed` is true only when the distilled text is at most 90% of the input and differs from it.
  */
 export function distillOutput(raw, options = {}) {
   const maxChars = options.maxChars ?? 6000
   const contextLines = options.contextLines ?? 2
+  const requireNoise = options.requireNoise !== false
   const input = String(raw ?? '')
   const stats = {
     inChars: input.length, outChars: 0, droppedLines: 0, droppedFrames: 0,
-    collapsedRepeats: 0, failLines: 0, elidedChars: 0,
+    collapsedRepeats: 0, failLines: 0, summaryLines: 0, safetyLines: 0, elidedChars: 0,
   }
 
   let lines = stripAnsi(input).replace(/\r\n?/g, '\n').split('\n')
@@ -51,6 +54,8 @@ export function distillOutput(raw, options = {}) {
 
   const kinds = lines.map(classify)
   stats.failLines = kinds.filter(kind => kind === 'fail').length
+  stats.summaryLines = kinds.filter(kind => kind === 'summary').length
+  stats.safetyLines = kinds.filter(kind => kind === 'safety').length
 
   const nearFailure = new Array(lines.length).fill(false)
   kinds.forEach((kind, index) => {
@@ -123,6 +128,15 @@ export function distillOutput(raw, options = {}) {
   }
 
   stats.outChars = text.length
-  const changed = text !== input && text.length <= input.length * MIN_REDUCTION_RATIO
+  // Distillation earns its risk by keeping a signal: a failure, a summary, a safety line, or
+  // actual noise. A long, clean listing has none of those, and cutting its middle destroys
+  // structure without protecting anything — so it stays as it is. The one exception is an output
+  // far over budget (8x), where leaving it whole would cost more context than the pointer does.
+  const noise = stats.droppedLines + stats.droppedFrames + stats.collapsedRepeats
+  const signal = stats.failLines + stats.summaryLines + stats.safetyLines
+  const hasSomethingToProtect = signal > 0 || noise > 0
+  const overCeiling = input.length > maxChars * 8
+  const worthIt = !requireNoise || hasSomethingToProtect || overCeiling
+  const changed = text !== input && text.length <= input.length * MIN_REDUCTION_RATIO && worthIt
   return { text, changed, stats }
 }

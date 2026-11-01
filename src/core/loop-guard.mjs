@@ -3,8 +3,26 @@ import { normalizeCommand } from './verify.mjs'
 /**
  * Loop guard: counts consecutive runs of the same command that fail with the same failure
  * fingerprint. A run with a different fingerprint is progress and restarts the count; a
- * passing run clears it; any workspace edit clears every count.
+ * passing run clears it; any workspace write clears every count.
  */
+
+/**
+ * Tools that write to the workspace. A successful call means the failing command may pass now,
+ * so every streak is cleared rather than waiting for a specific `edit` tool.
+ */
+export const DEFAULT_PROGRESS_TOOLS = Object.freeze([
+  'edit', 'write', 'multiedit', 'apply_patch', 'patch', 'notebook_edit', 'str_replace_editor', 'create_file',
+])
+
+/**
+ * Whether one successful tool call may have changed the workspace.
+ * @param {string} name - the tool name.
+ * @param {ReadonlyArray<string>} tools - configured progress tools.
+ * @returns {boolean} true when the call counts as progress.
+ */
+export function isProgressTool(name, tools = DEFAULT_PROGRESS_TOOLS) {
+  return tools.includes(String(name ?? ''))
+}
 
 /**
  * Create an empty loop-guard state for one session.

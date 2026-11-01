@@ -15,6 +15,7 @@ export const HELP = [
   'SEE WHAT IT IS DOING',
   '  /greenharness                 summary: tokens saved, last reply, models',
   '  /greenharness last            which model answered the last request',
+  '  /greenharness doctor          every effective setting, and anything that looks wrong',
   '',
   'CHOOSE MODELS',
   '  /greenharness models          list the models you have set up in DSH, numbered',
@@ -37,11 +38,10 @@ export const HELP = [
   '  /greenharness loop on|off     stop a command that keeps failing the same way',
   '  /greenharness verbose on|off  show which model runs next on shortened output',
   '',
-  'BENCHMARK & COMPARE',
-  '  /greenharness benchmark on <prompt>',
-  '                                compare always-large vs greenharness on a prompt',
-  '  /greenharness benchmark on build-horse | subtract-fix | loop-stuck',
-  '                                run and compare standard benchmark scenarios',
+  'BENCHMARK (DEVELOPER TOOL)',
+  '  /greenharness benchmark on build-horse',
+  '                                compare always-large vs greenharness on a mock scenario',
+  '                                needs GREENHARNESS_BENCH=1 and the dsh binary on PATH',
   '',
   'Settings last until DSH restarts.',
 ].join('\n')
@@ -86,7 +86,7 @@ const PROFILES = {
 export function parseCommand(rawInput = '') {
   const [first = 'status', ...args] = String(rawInput).trim().split(/\s+/).filter(Boolean)
   const verb = first.toLowerCase()
-  if (verb === 'status' || verb === 'help' || verb === 'models' || verb === 'last') {
+  if (verb === 'status' || verb === 'help' || verb === 'models' || verb === 'last' || verb === 'doctor') {
     return args.length === 0 ? { action: verb } : usage(`/greenharness ${verb}`)
   }
   if (verb === 'on' || verb === 'off') {
@@ -136,6 +136,7 @@ export async function runCommand(rawInput, host) {
     case 'help': return ok(HELP)
     case 'status': return ok(statusText(host))
     case 'last': return showLast(host)
+    case 'doctor': return ok(doctorText(host))
     case 'pause':
       host.control.paused = command.paused
       return ok(command.paused ? 'GreenHarness paused. Tool output and model routing are left alone.' : 'GreenHarness resumed.')
@@ -152,7 +153,23 @@ export async function runCommand(rawInput, host) {
   }
 }
 
+/**
+ * The benchmark compares two arms against the scripted mock server. It spawns `dsh` twice and
+ * takes a minute or two, so it never runs from an ordinary session: it needs an explicit opt-in
+ * and it says so before doing anything.
+ */
 async function runBenchmark(prompt, host) {
+  if (process.env.GREENHARNESS_BENCH !== '1') {
+    return fail([
+      'The benchmark is a developer tool, not a normal command.',
+      'It runs two scripted mock arms and takes a minute or two.',
+      '',
+      'From the plugin checkout:  npm run bench:compare -- "build-horse"',
+      'Inside this session:       set GREENHARNESS_BENCH=1 and restart dsh',
+      '',
+      'The mock measures plumbing and token shape, never a real model.',
+    ].join('\n'))
+  }
   try {
     const runner = host?.benchmarkRunner ?? (await import('../bench/compare.mjs')).runBenchmarkComparison
     const result = await runner(prompt)
@@ -160,6 +177,45 @@ async function runBenchmark(prompt, host) {
   } catch (error) {
     return fail(`Benchmark failed: ${error instanceof Error ? error.message : String(error)}`)
   }
+}
+
+/**
+ * Every effective setting, plus the checks that commonly explain "it is on but nothing happens".
+ * @param {{ control: { paused: boolean }, settings: any, runtime: any, ledger?: any, agent?: any }} host
+ */
+export function doctorText({ control, settings, runtime, ledger, agent }) {
+  const stats = runtime.stats()
+  const count = key => stats[key] ?? 0
+  const describe = route => (route ? `${route.provider}/${route.model}${route.reasoningEffort === '' ? '' : ` (${route.reasoningEffort})`}` : 'not set')
+  const lines = [
+    'GREENHARNESS DOCTOR',
+    '',
+    `State: ${control.paused ? 'PAUSED' : 'running'} · profile ${settings.profile}`,
+    `Models: small = ${describe(settings.tiers.small)} · large = ${describe(settings.tiers.large)}`,
+    `Routing: ${settings.routing.enabled ? 'on' : 'off'}${settings.routing.pinned === '' ? '' : `, pinned to ${settings.routing.pinned}`} · notices ${settings.routing.stripNotices}`,
+    `Triage: ${settings.triage.enabled ? settings.triage.mode : 'off'}${settings.triage.enabled ? ` (large at ${settings.triage.largeAt}, mixed at ${settings.triage.mixedAt}, after ${settings.triage.mixedAfterSteps} steps)` : ''}`,
+    `Distillation: ${onOff(settings.distill.enabled)} · tools ${settings.distill.tools.join(', ')} · budget ${settings.distill.maxChars} chars · noise required ${onOff(settings.distill.requireNoise)}`,
+    `Read dedupe: ${onOff(settings.readDedupe.enabled)} · escape hatch ${onOff(settings.readDedupe.escapeHatch)}`,
+    `Loop breaker: ${onOff(settings.loopBreaker.enabled)} · after ${settings.loopBreaker.threshold} identical failures · progress tools ${settings.loopBreaker.progressTools.join(', ')}`,
+    `Ledger: ${ledger?.fileFor?.(agent?.id) || settings.ledger.path}${settings.ledger.perSession ? ' (one file per session)' : ' (shared file)'}`,
+    '',
+    `Work so far: ${count('request')} model calls, ${count('route')} switches, ${count('tool:distill')} distilled, ${count('tool:dedupe')} deduped, ${count('loop-break')} loops stopped.`,
+    `Sessions holding state: ${runtime.sessionCount?.() ?? 'unknown'}`,
+  ]
+  if (settings.tiers.large === undefined) {
+    lines.push('', 'Routing is idle: no large model is set. /greenharness models, then /greenharness large <number>.')
+  }
+  if (count('notice-kept') > 0) {
+    lines.push('', `${count('notice-kept')} model-switch notice(s) were kept: the model changed outside GreenHarness, so the notice is real information.`)
+  }
+  const mismatch = runtime.lastMismatch?.()
+  if (mismatch !== undefined) {
+    lines.push('', `Latest call mismatch: asked for ${mismatch.intended}, DSH used ${mismatch.actual}.`)
+  }
+  if (count('errors') > 0) {
+    lines.push('', `${count('errors')} plugin error(s). Latest: ${runtime.lastError?.() ?? 'unknown'}`)
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -214,7 +270,7 @@ export function statusText({ control, settings, runtime }) {
     `Models: small = ${small_}, large = ${describe(settings.tiers.large)}.`,
     `Features: shorten output ${onOff(settings.distill.enabled)}, repeated reads ${onOff(settings.readDedupe.enabled)}, loop stop ${onOff(settings.loopBreaker.enabled)}, route labels ${onOff(settings.verbose)}.`,
     ...(settings.tiers.large ? [] : ['Next step: type /greenharness models, then /greenharness large <number> to add a strong model.']),
-    'All commands: /greenharness help',
+    'All commands: /greenharness help · every setting: /greenharness doctor',
   )
   return lines.join('\n')
 }

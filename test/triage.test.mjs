@@ -53,3 +53,15 @@ test('latestUserMessage picks the last user turn and skips model notices', () =>
   assert.equal(latestUserMessage(messages), 'second')
   assert.equal(latestUserMessage([]), undefined)
 })
+
+// === GreenHarness 0.2.0 addition: classification must not depend on history ===
+test('the same request scores the same on every call', () => {
+  const prompt = 'Please run the tests and lint afterwards'
+  const first = classifyRequest(prompt, {})
+  for (let i = 0; i < 5; i += 1) {
+    assert.deepEqual(classifyRequest(prompt, {}), first)
+  }
+  const alternating = ['the tests are green', 'lint the tests', 'tests tests tests'].map(text => scoreRequest(text).score)
+  const repeated = ['the tests are green', 'lint the tests', 'tests tests tests'].map(text => scoreRequest(text).score)
+  assert.deepEqual(alternating, repeated)
+})

@@ -39,7 +39,8 @@ export function renderPatch({ routes, tiers, greenharness, pluginEntry, ledgerPa
         name: pluginEntry,
         config: {
           tiers: { small: tiers.small, large: tiers.large },
-          ledger: { path: ledgerPath ?? '.greenharness/ledger.jsonl', ...(pluginOptions.ledger ?? {}) },
+          // One ledger per run, not one per session, so the benchmark can read it back.
+          ledger: { path: ledgerPath ?? '.greenharness/ledger.jsonl', perSession: false, ...(pluginOptions.ledger ?? {}) },
           ...withoutKey(pluginOptions, 'ledger'),
         },
       }],

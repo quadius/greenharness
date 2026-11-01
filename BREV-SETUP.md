@@ -68,7 +68,11 @@ This is the model being cut off. For thinking models, **thinking tokens count to
 - Do not set `--max-model-len` lower than your longest prompt plus the output limit.
 
 ## Check it is working
-1. Run the toggle test in `bench/BREV.md` (step 4) to confirm the thinking switch does something on your server.
+1. Run a toggle test before trusting any number: send the same prompt twice against the served
+   model, once with the thinking switch on and once off, and compare the response body. If it is
+   identical, the server ignores the switch, and the large tier's `reasoningEffort` is decoration.
+2. Check `.greenharness/ledger-<session>.jsonl` in the workspace: it should hold `triage`, `route`
+   and `request` records, and `doctor` should show a rising model-call count.
 2. Send a task in DSH, then type `/greenharness last`. It shows which model served the prompt and a bar for the cheap model's share.
 
 ## Cost

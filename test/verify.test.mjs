@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { isMutatingCommand } from '../src/core/verify.mjs'
 import {
   DEFAULT_VERIFIER_PATTERNS, classifyOutcome, compileVerifierPatterns, fingerprintOf,
   isVerifierCommand, normalizeCommand, parseExitMarker,
@@ -43,4 +44,26 @@ test('fingerprint ignores digits and durations but separates different failures'
 test('command keys collapse whitespace', () => {
   assert.equal(normalizeCommand('  node   --test  test/ '), 'node --test test/')
   assert.equal(normalizeCommand(undefined), '')
+})
+
+// === GreenHarness 0.2.0 addition: what counts as a workspace write ===
+test('mutating commands are recognised and read-only ones are not', () => {
+  const writers = [
+    'sed -i s/3/2/ src/math.mjs',
+    'rm -rf build',
+    'cp a b',
+    'mkdir -p out',
+    'echo hi > out.txt',
+    'echo more >> out.txt',
+    'git commit -m "fix"',
+    'git checkout -- src/x.mjs',
+    'npm install left-pad',
+    'pnpm add -D vitest',
+    'pip install requests',
+    'cargo add serde',
+    'cat patch.diff | patch -p1',
+  ]
+  for (const command of writers) assert.equal(isMutatingCommand(command), true, command)
+  const readers = ['ls -la', 'node --test', 'git status', 'cat a.txt', 'grep -r foo src', 'npm test', '']
+  for (const command of readers) assert.equal(isMutatingCommand(command), false, command)
 })

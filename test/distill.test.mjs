@@ -81,3 +81,25 @@ test('carriage-return progress keeps the final frame of each line', () => {
   assert.match(text, /FAIL: final/)
   assert.doesNotMatch(text, /progress 10%/)
 })
+
+// === GreenHarness 0.2.0 addition: a clean listing is not worth cutting ===
+test('a clean output with no failure, summary, safety line or noise is left alone', () => {
+  const listing = Array.from({ length: 120 }, (_, i) => `src/module-${i}.mjs`).join('\n')
+  const result = distillOutput(listing, { maxChars: 400 })
+  assert.equal(result.changed, false, 'structure beats a blind truncation')
+})
+
+test('a failing log still distils, and the signal survives', () => {
+  const log = `${Array.from({ length: 120 }, (_, i) => `  at frame ${i} (node_modules/x/y.js:${i}:1)`).join('\n')}\nfailure: expected 2 but got 3\nTests: 1 failed, 2 passed`
+  const result = distillOutput(log, { maxChars: 400 })
+  assert.equal(result.changed, true)
+  assert.match(result.text, /failure: expected 2 but got 3/)
+  assert.match(result.text, /Tests: 1 failed, 2 passed/)
+})
+
+test('an output far over budget is distilled even without a signal line', () => {
+  const listing = Array.from({ length: 6000 }, (_, i) => `src/module-${i}.mjs`).join('\n')
+  const result = distillOutput(listing, { maxChars: 400 })
+  assert.equal(result.changed, true)
+  assert.match(result.text, /lines omitted/)
+})

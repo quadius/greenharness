@@ -1,23 +1,28 @@
 import { DEFAULT_VERIFIER_PATTERNS, compileVerifierPatterns } from './core/verify.mjs'
+import { DEFAULT_PROGRESS_TOOLS } from './core/loop-guard.mjs'
+
+/** Accepted values for `routing.stripNotices`. */
+export const NOTICE_POLICIES = Object.freeze(['tier', 'all', 'none'])
 
 /**
  * Validate and complete the plugin configuration. Misconfiguration fails at load: a tier
- * without a provider and model, a non-integer threshold, an out-of-range fraction, or an
- * invalid verifier pattern throws here rather than silently changing routing later.
+ * without a provider and model, a non-integer threshold, an out-of-range fraction, an unknown
+ * enum value, or an invalid verifier pattern throws here rather than silently changing routing
+ * later.
  *
  * @param {Record<string, any>} raw - the configuration DSH validated against the plugin schema.
  * @returns {{
  *   tiers: { small?: Route, large?: Route },
- *   routing: { enabled: boolean, pinned: '' | 'small' | 'large' },
+ *   routing: { enabled: boolean, pinned: '' | 'small' | 'large', stripNotices: 'tier' | 'all' | 'none' },
  *   profile: string,
  *   verbose: boolean,
  *   cascade: { escalateAfterFailures: number, deescalateAfterPasses: number, minStepsPerTier: number },
  *   verifier: { patterns: string[] },
  *   triage: { enabled: boolean, mode: 'heuristic' | 'model', largeAt: number, mixedAt: number, mixedAfterSteps: number, maxChars: number, model: Route },
- *   distill: { enabled: boolean, maxChars: number, contextLines: number },
- *   readDedupe: { enabled: boolean },
- *   loopBreaker: { enabled: boolean, threshold: number },
- *   ledger: { path: string, pricing: Record<string, Price> },
+ *   distill: { enabled: boolean, tools: string[], maxChars: number, contextLines: number, requireNoise: boolean },
+ *   readDedupe: { enabled: boolean, escapeHatch: boolean },
+ *   loopBreaker: { enabled: boolean, threshold: number, progressTools: string[] },
+ *   ledger: { path: string, perSession: boolean, maxBytes: number, outputsKeep: number, pricing: Record<string, Price> },
  * }} complete settings with every default applied.
  */
 export function normalizeSettings(raw) {
@@ -28,6 +33,10 @@ export function normalizeSettings(raw) {
   const pinned = String(raw?.routing?.pinned ?? '')
   if (pinned !== '' && pinned !== 'small' && pinned !== 'large') {
     throw new Error(`greenharness: routing.pinned must be "small", "large" or empty (got "${pinned}")`)
+  }
+  const stripNotices = String(raw?.routing?.stripNotices ?? 'tier')
+  if (!NOTICE_POLICIES.includes(stripNotices)) {
+    throw new Error(`greenharness: routing.stripNotices must be one of ${NOTICE_POLICIES.join(', ')} (got "${stripNotices}")`)
   }
 
   const triageMode = String(raw?.triage?.mode ?? 'heuristic')
@@ -41,12 +50,12 @@ export function normalizeSettings(raw) {
   }
 
   const cascade = {
-    escalateAfterFailures: integerAtLeast(raw.cascade?.escalateAfterFailures ?? 1, 1, 'cascade.escalateAfterFailures'),
-    deescalateAfterPasses: integerAtLeast(raw.cascade?.deescalateAfterPasses ?? 2, 1, 'cascade.deescalateAfterPasses'),
-    minStepsPerTier: integerAtLeast(raw.cascade?.minStepsPerTier ?? 2, 0, 'cascade.minStepsPerTier'),
+    escalateAfterFailures: integerAtLeast(raw?.cascade?.escalateAfterFailures ?? 1, 1, 'cascade.escalateAfterFailures'),
+    deescalateAfterPasses: integerAtLeast(raw?.cascade?.deescalateAfterPasses ?? 2, 1, 'cascade.deescalateAfterPasses'),
+    minStepsPerTier: integerAtLeast(raw?.cascade?.minStepsPerTier ?? 2, 0, 'cascade.minStepsPerTier'),
   }
 
-  const patterns = raw.verifier?.patterns?.length ? [...raw.verifier.patterns] : [...DEFAULT_VERIFIER_PATTERNS]
+  const patterns = raw?.verifier?.patterns?.length ? [...raw.verifier.patterns] : [...DEFAULT_VERIFIER_PATTERNS]
   try {
     compileVerifierPatterns(patterns)
   } catch (error) {
@@ -55,7 +64,7 @@ export function normalizeSettings(raw) {
 
   return {
     tiers: { small, large },
-    routing: { enabled: large !== undefined, pinned },
+    routing: { enabled: large !== undefined, pinned, stripNotices },
     profile: String(raw?.profile ?? 'balanced'),
     verbose: raw?.verbose ?? true,
     cascade,
@@ -72,18 +81,27 @@ export function normalizeSettings(raw) {
         : { provider: '', model: '', reasoningEffort: '' },
     },
     distill: {
-      enabled: raw.distill?.enabled ?? true,
-      maxChars: integerAtLeast(raw.distill?.maxChars ?? 12000, 500, 'distill.maxChars'),
-      contextLines: integerAtLeast(raw.distill?.contextLines ?? 2, 0, 'distill.contextLines'),
+      enabled: raw?.distill?.enabled ?? true,
+      tools: stringList(raw?.distill?.tools, ['bash'], 'distill.tools'),
+      maxChars: integerAtLeast(raw?.distill?.maxChars ?? 12000, 500, 'distill.maxChars'),
+      contextLines: integerAtLeast(raw?.distill?.contextLines ?? 2, 0, 'distill.contextLines'),
+      requireNoise: raw?.distill?.requireNoise ?? true,
     },
-    readDedupe: { enabled: raw.readDedupe?.enabled ?? true },
+    readDedupe: {
+      enabled: raw?.readDedupe?.enabled ?? true,
+      escapeHatch: raw?.readDedupe?.escapeHatch ?? true,
+    },
     loopBreaker: {
-      enabled: raw.loopBreaker?.enabled ?? true,
-      threshold: integerAtLeast(raw.loopBreaker?.threshold ?? 3, 2, 'loopBreaker.threshold'),
+      enabled: raw?.loopBreaker?.enabled ?? true,
+      threshold: integerAtLeast(raw?.loopBreaker?.threshold ?? 3, 2, 'loopBreaker.threshold'),
+      progressTools: stringList(raw?.loopBreaker?.progressTools, DEFAULT_PROGRESS_TOOLS, 'loopBreaker.progressTools'),
     },
     ledger: {
-      path: raw.ledger?.path ?? '.greenharness/ledger.jsonl',
-      pricing: raw.ledger?.pricing ?? {},
+      path: String(raw?.ledger?.path ?? '.greenharness/ledger.jsonl'),
+      perSession: raw?.ledger?.perSession ?? true,
+      maxBytes: integerAtLeast(raw?.ledger?.maxBytes ?? 4 * 1024 * 1024, 0, 'ledger.maxBytes'),
+      outputsKeep: integerAtLeast(raw?.ledger?.outputsKeep ?? 50, 0, 'ledger.outputsKeep'),
+      pricing: raw?.ledger?.pricing ?? {},
     },
   }
 }
@@ -100,6 +118,16 @@ function normalizeRoute(route, label) {
     throw new Error(`greenharness: ${label} needs both \`provider\` and \`model\``)
   }
   return { provider: String(route.provider), model: String(route.model), reasoningEffort: String(route.reasoningEffort ?? '') }
+}
+
+/** One non-empty list of names, or the fallback when the value is absent. */
+function stringList(value, fallback, label) {
+  if (value === undefined) return [...fallback]
+  if (!Array.isArray(value)) throw new Error(`greenharness: ${label} must be a list of strings`)
+  if (value.some(entry => typeof entry !== 'string')) throw new Error(`greenharness: ${label} must be a list of strings`)
+  const names = value.map(entry => entry.trim())
+  if (names.some(name => name === '')) throw new Error(`greenharness: ${label} cannot contain an empty name`)
+  return names
 }
 
 function integerAtLeast(value, min, label) {

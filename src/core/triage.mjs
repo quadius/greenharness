@@ -20,7 +20,9 @@ const BUILD_RE = /\b(?:build|create|generate|design|implement|scaffold|prototype
 const DOMAIN_RE = /\b(?:3d|three\.?js|webgl|webgpu|shader|renderer|rendering|game|animation|physics|canvas|scene|mesh|texture|dashboard|website|web ?app|api|server|service|cli|library|framework|engine|simulation|visuali[sz]ation|chart|graph|frontend|backend|full[- ]?stack)\b/gi
 const SCRATCH_RE = /\b(?:from scratch|whole (?:app|application|project|thing)|entire|end to end|greenfield|new project)\b/i
 const DEBUG_RE = /\b(?:fix|bug|failing|fails?|broken|regression|stack ?trace|debug|investigate|traceback)\b/gi
-const TEST_RE = /\b(?:tests?|specs?|coverage|lint|typecheck|tsc|pytest|jest|vitest|mocha)\b/gi
+// No `/g` flag: this one is used with `.test()`, and a global regex keeps `lastIndex`
+// between calls, which made the same prompt score differently depending on history.
+const TEST_RE = /\b(?:tests?|specs?|coverage|lint|typecheck|tsc|pytest|jest|vitest|mocha)\b/i
 const TRIVIAL_RE = /^\s*(?:hi|hello|hey|thanks|thank you|ok(?:ay)?|yes|no|sure|cool|great|nice)\b[\s\S]{0,40}$/i
 
 /**
@@ -113,7 +115,14 @@ function textOf(content) {
   return ''
 }
 
-/** @param {string} text @param {RegExp} re */
+/**
+ * Count matches of one pattern. The global flags are only there to collect every match, so
+ * `lastIndex` is reset on both sides: a caller can never inherit state from an earlier prompt.
+ * @param {string} text @param {RegExp} re
+ */
 function countMatches(text, re) {
-  return (text.match(re) ?? []).length
+  re.lastIndex = 0
+  const matches = text.match(re) ?? []
+  re.lastIndex = 0
+  return matches.length
 }

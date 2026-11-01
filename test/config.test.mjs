@@ -64,3 +64,31 @@ test('an invalid pin, a crossed threshold pair or a model mode with no model fai
   assert.throws(() => normalizeSettings({ triage: { mode: 'model' } }), /triage\.model/)
   assert.throws(() => normalizeSettings({ triage: { mode: 'guess' } }), /triage\.mode/)
 })
+
+// === GreenHarness 0.2.0 additions ===
+test('the 0.2.0 defaults are safe: per-session ledger, noise-only distillation, dedupe escape hatch', () => {
+  const settings = normalizeSettings({ tiers })
+  assert.equal(settings.ledger.perSession, true)
+  assert.equal(settings.ledger.maxBytes, 4 * 1024 * 1024)
+  assert.equal(settings.ledger.outputsKeep, 50)
+  assert.equal(settings.distill.requireNoise, true)
+  assert.deepEqual(settings.distill.tools, ['bash'])
+  assert.equal(settings.readDedupe.escapeHatch, true)
+  assert.equal(settings.routing.stripNotices, 'tier')
+  assert.ok(settings.loopBreaker.progressTools.includes('apply_patch'))
+})
+
+test('an unknown notice policy, an empty tool list entry or a negative size fails loudly', () => {
+  assert.throws(() => normalizeSettings({ routing: { stripNotices: 'sometimes' } }), /routing\.stripNotices/)
+  assert.throws(() => normalizeSettings({ distill: { tools: ['bash', ' '] } }), /distill\.tools cannot contain an empty name/)
+  assert.throws(() => normalizeSettings({ distill: { tools: 'bash' } }), /distill\.tools must be a list/)
+  assert.throws(() => normalizeSettings({ ledger: { outputsKeep: -1 } }), /ledger\.outputsKeep/)
+  assert.throws(() => normalizeSettings({ ledger: { maxBytes: 1.5 } }), /ledger\.maxBytes/)
+  assert.throws(() => normalizeSettings({ loopBreaker: { progressTools: [null] } }), /loopBreaker\.progressTools must be a list/)
+})
+
+test('progress tools and distill tools can be narrowed explicitly', () => {
+  const settings = normalizeSettings({ tiers, loopBreaker: { progressTools: ['apply_patch'] }, distill: { tools: [] } })
+  assert.deepEqual(settings.loopBreaker.progressTools, ['apply_patch'])
+  assert.deepEqual(settings.distill.tools, [])
+})

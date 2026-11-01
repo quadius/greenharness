@@ -2,14 +2,21 @@ import { createHash } from 'node:crypto'
 import { usageCostUsd } from './core/pricing.mjs'
 import { distillOutput } from './core/distill.mjs'
 import { createCascade, escalate, recordStep, recordVerification, setTier } from './core/cascade.mjs'
-import { createLoopGuard, noteWorkspaceChange, recordCommandOutcome, streakOf } from './core/loop-guard.mjs'
-import { clearSession, createReadIndex, findUnchangedRead, forgetPath, rememberRead } from './core/read-index.mjs'
+import { createLoopGuard, isProgressTool, noteWorkspaceChange, recordCommandOutcome, streakOf } from './core/loop-guard.mjs'
+import {
+  clearSession, createReadIndex, findUnchangedRead, forgetPath, markReadPointed, rememberRead,
+} from './core/read-index.mjs'
 import { classifyRequest, latestUserMessage, planFor } from './core/triage.mjs'
 import {
-  classifyOutcome, compileVerifierPatterns, isVerifierCommand, normalizeCommand, parseExitMarker,
+  classifyOutcome, compileVerifierPatterns, isMutatingCommand, isVerifierCommand, normalizeCommand, parseExitMarker,
 } from './core/verify.mjs'
+import { stripModelNotices } from './core/route.mjs'
 
-const CONTEXT_REMOVAL_EVENTS = new Set(['compaction/start', 'compaction/end', 'compaction/prune', 'compaction/summary'])
+/** Session events that mean earlier tool results are no longer in the model's context. */
+const CONTEXT_REMOVAL_EVENTS = new Set([
+  'compaction/start', 'compaction/end', 'compaction/prune', 'compaction/summary',
+  'compaction/checkpoint', 'compaction/tool-pairing',
+])
 
 /**
  * @typedef {object} ToolCall
@@ -22,12 +29,14 @@ const CONTEXT_REMOVAL_EVENTS = new Set(['compaction/start', 'compaction/end', 'c
  * @property {boolean} [timedOut]
  * @property {string} [text]
  * @property {(text: string) => Promise<string | undefined>} [spill]
+ * @property {(text: string) => Promise<string | undefined>} [saveFile]
  */
 
 /**
  * Build the GreenHarness runtime: triage, routing, distillation, read dedupe, loop breaking and
- * the cost ledger. The Cordis adapter asks it for the route of each model call, feeds it tool
- * calls, passes it session events, and shows the user `/greenharness` replies.
+ * the cost ledger. The Cordis adapter asks it for the route of each model call, hands it the
+ * messages entering a step and the tool calls as they settle, passes it session events, and shows
+ * the user `/greenharness` replies.
  *
  * @param {ReturnType<import('./config.mjs').normalizeSettings>} settings - complete settings.
  * @param {{
@@ -74,6 +83,10 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
         triagedDigest: '',
         pendingEscalation: null,
         turn: undefined,
+        /** The route this plugin last asked for, so its own notices can be told apart. */
+        applied: undefined,
+        /** model and provider/model to the tier that produced it, for honest labels. */
+        tierLabels: new Map(),
       }
       sessions.set(sessionId, state)
     }
@@ -89,9 +102,34 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
       : { provider: route.provider, model: route.model, reasoningEffort: route.reasoningEffort }
   }
 
-  /** @param {{ provider?: string, model?: string } | undefined} route */
-  function tierOfRoute(route) {
+  /**
+   * Remember which tier produced one model id, so a call is labelled by what was chosen for it
+   * rather than by whatever the large tier happens to be configured as now.
+   * @param {ReturnType<typeof stateOf>} state
+   * @param {'small' | 'large'} tier
+   * @param {{ provider?: string, model?: string } | undefined} route
+   */
+  function labelTier(state, tier, route) {
+    if (route?.model === undefined) return
+    const labels = [[String(route.model), tier]]
+    if (route.provider) labels.push([`${route.provider}/${route.model}`, tier])
+    for (const [label, value] of labels) {
+      if (state.tierLabels.get(label) === 'large' && value === 'small') continue
+      state.tierLabels.set(label, value)
+    }
+  }
+
+  /**
+   * The tier one actual route belongs to.
+   * @param {ReturnType<typeof stateOf>} state
+   * @param {{ provider?: string, model?: string } | undefined} route
+   * @returns {'small' | 'large'}
+   */
+  function tierOfRoute(state, route) {
     const large = settings.tiers.large
+    const key = `${route?.provider ?? ''}/${route?.model ?? ''}`
+    const known = state.tierLabels.get(key) ?? state.tierLabels.get(String(route?.model ?? ''))
+    if (known !== undefined) return known
     if (large === undefined) return 'small'
     return route?.provider === large.provider && route?.model === large.model ? 'large' : 'small'
   }
@@ -108,11 +146,12 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
    * Run the request classifier. The injected classifier wins; if it returns undefined or
    * throws, the built-in heuristic answers instead, so triage never blocks a run.
    * @param {string} text
+   * @param {string} sessionId
    */
-  async function classify(text) {
+  async function classify(text, sessionId) {
     if (classifier !== undefined) {
       try {
-        const result = await classifier(text)
+        const result = await classifier(text, sessionId)
         if (result !== undefined) return result
       } catch (error) {
         logger?.warn?.(`greenharness: triage classifier failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -144,7 +183,7 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     latestTurn = turn
 
     if (!settings.triage.enabled) return
-    const result = await classify(text)
+    const result = await classify(text, sessionId)
     if (result === undefined) return
 
     turn.verdict = result.verdict
@@ -160,14 +199,61 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     // turn would keep every later easy prompt on the large model until two tests pass.
     if (result.verdict !== 'large' && state.cascade.tier === 'large') {
       const back = setTier(state.cascade, 'small', 'triage-reset')
-      if (back !== null) log.write({ type: 'route', session: sessionId, ...back, selection: tierRoute('small') })
+      if (back !== null) {
+        log.write({ type: 'route', session: sessionId, ...back, selection: tierRoute('small') })
+        labelTier(state, 'small', tierRoute('small'))
+      }
     }
     if (result.verdict === 'large') {
       const change = setTier(state.cascade, 'large', 'triage-large')
-      if (change !== null) log.write({ type: 'route', session: sessionId, ...change, selection: tierRoute('large') })
+      if (change !== null) {
+        log.write({ type: 'route', session: sessionId, ...change, selection: tierRoute('large') })
+      }
     } else if (result.verdict === 'mixed') {
       state.pendingEscalation = { afterSteps: settings.triage.mixedAfterSteps, reason: 'triage-mixed' }
     }
+  }
+
+  /**
+   * Whether one model id in a switch notice is one of the configured tiers. Used to recognise a
+   * notice this plugin provoked when the previous route is not known.
+   * @param {string} label - a bare model id or `provider/model`.
+   */
+  function isTierModel(label) {
+    for (const tier of ['small', 'large']) {
+      const route = settings.tiers[tier]
+      if (route === undefined) continue
+      if (label === route.model || label === `${route.provider}/${route.model}`) return true
+    }
+    return false
+  }
+
+  /**
+   * The messages admitted to a step, minus the switch notices this plugin caused. Telemetry is
+   * written only when a notice is seen, so a silent run stays silent.
+   * @param {string} sessionId
+   * @param {ReadonlyArray<any>} messages - messages proposed for the step.
+   * @returns {Promise<any[]>} the messages to admit.
+   */
+  async function preStep(sessionId, messages) {
+    const state = stateOf(sessionId)
+    let admitted = messages
+    if (settings.routing.enabled && settings.tiers.large !== undefined) {
+      const filtered = stripModelNotices(messages, {
+        policy: settings.routing.stripNotices,
+        applied: state.applied,
+        isTierModel,
+      })
+      admitted = filtered.messages
+      if (filtered.stripped > 0) {
+        log.write({ type: 'notice-stripped', session: sessionId, count: filtered.stripped })
+      }
+      if (filtered.kept > 0) {
+        log.write({ type: 'notice-kept', session: sessionId, count: filtered.kept, reason: 'not-caused-by-routing' })
+      }
+    }
+    await observeMessages(sessionId, admitted)
+    return admitted
   }
 
   /**
@@ -177,7 +263,11 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
    * @param {{ provider?: string, model?: string, reasoningEffort?: string }} [proposed]
    */
   function routeForNextCall(sessionId, proposed) {
-    if (!settings.routing.enabled || settings.tiers.large === undefined) return undefined
+    if (!settings.routing.enabled || settings.tiers.large === undefined) {
+      const idle = stateOf(sessionId)
+      idle.applied = undefined
+      return undefined
+    }
     if (settings.tiers.small === undefined && proposed?.provider && proposed?.model) {
       settings.tiers.small = { provider: proposed.provider, model: proposed.model, reasoningEffort: proposed.reasoningEffort ?? '' }
     }
@@ -189,9 +279,14 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
       state.pendingEscalation = null
       recordStep(state.cascade)
       state.intended = tierRoute(pinned)
+      state.applied = state.intended
+      labelTier(state, pinned, state.intended)
       return state.intended
     }
-    if (settings.tiers.small === undefined) return undefined
+    if (settings.tiers.small === undefined) {
+      state.applied = undefined
+      return undefined
+    }
 
     const pending = state.pendingEscalation
     if (pending !== null && state.cascade.tier === 'small' && state.cascade.stepsInTier >= pending.afterSteps) {
@@ -201,6 +296,8 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     }
     recordStep(state.cascade)
     state.intended = tierRoute(state.cascade.tier)
+    state.applied = state.intended
+    labelTier(state, state.cascade.tier, state.intended)
     return state.intended
   }
 
@@ -214,6 +311,7 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
       state.pendingEscalation = null
       // Releasing a pin (tier auto) starts every session back on the small tier.
       setTier(state.cascade, tier === 'large' ? 'large' : 'small', tier === '' ? 'unpinned' : 'pinned')
+      state.applied = undefined
     }
   }
 
@@ -232,6 +330,31 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     }
   }
 
+  /**
+   * Replace one long tool result with a shorter, still-informative one. Nothing is lost: the full
+   * text is spilled (or written to a file) and the replacement points at it.
+   * @param {ToolCall} call
+   * @param {ReturnType<typeof stateOf>} state
+   * @returns {Promise<string | undefined>} the replacement text, when one is worth using.
+   */
+  async function distillReplacement(call, state) {
+    if (!settings.distill.enabled) return undefined
+    if (!settings.distill.tools.includes(call.name)) return undefined
+    const text = call.text ?? ''
+    if (text.length === 0) return undefined
+    const distilled = distillOutput(text, {
+      maxChars: settings.distill.maxChars,
+      contextLines: settings.distill.contextLines,
+      requireNoise: settings.distill.requireNoise,
+    })
+    if (!distilled.changed) return undefined
+    const hint = call.spill ? await call.spill(text).catch(() => undefined) : undefined
+    const file = call.saveFile ? await call.saveFile(text).catch(() => undefined) : undefined
+    const nextTier = settings.verbose ? state.cascade.tier : undefined
+    const candidate = composeDistilled(distilled, hint, nextTier, file)
+    return candidate.length < text.length ? candidate : undefined
+  }
+
   async function afterBash(call, state) {
     const command = normalizeCommand(call.args?.command)
     if (call.isError === true && call.exitCode === undefined && call.timedOut !== true) {
@@ -244,33 +367,26 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     const exitCode = call.exitCode ?? parseExitMarker(call.text ?? '') ?? (call.isError ? 1 : 0)
     const outcome = classifyOutcome({ exitCode, timedOut: call.timedOut === true, text: call.text ?? '' })
     const repeats = recordCommandOutcome(state.loop, command, outcome)
+    // A writer may have fixed the failure: clear every streak, not only this command's.
+    if (outcome.passed && isMutatingCommand(command)) noteWorkspaceChange(state.loop)
     const verifier = isVerifierCommand(command, verifierRegexes)
     if (verifier) applyChange(call, recordVerification(state.cascade, outcome.passed), { command: truncate(command) })
 
-    let replacement
-    let action = 'none'
-    if (settings.distill.enabled && (call.text ?? '').length > 0) {
-      const distilled = distillOutput(call.text, { maxChars: settings.distill.maxChars, contextLines: settings.distill.contextLines })
-      if (distilled.changed) {
-        const hint = call.spill ? await call.spill(call.text).catch(() => undefined) : undefined
-        const file = call.saveFile ? await call.saveFile(call.text).catch(() => undefined) : undefined
-        const nextTier = settings.verbose ? state.cascade.tier : undefined
-        const candidate = composeDistilled(distilled, hint, nextTier, file)
-        if (candidate.length < call.text.length) {
-          replacement = candidate
-          action = 'distill'
-        }
-      }
-    }
-
+    const replacement = await distillReplacement(call, state)
     log.write({
-      type: 'tool', session: call.sessionId, tool: 'bash', action,
+      type: 'tool', session: call.sessionId, tool: 'bash', action: replacement === undefined ? 'none' : 'distill',
       verifier, passed: outcome.passed, exitCode, fingerprint: outcome.fingerprint, repeats,
       command: truncate(command), rawChars: (call.text ?? '').length, outChars: replacement?.length ?? (call.text ?? '').length,
     })
     return replacement === undefined ? undefined : { text: replacement }
   }
 
+  /**
+   * Replace a byte-identical re-read with a pointer, but only once in a row: the next identical
+   * read is served in full again, so the content can never become unreachable.
+   * @param {ToolCall} call
+   * @returns {{ text: string } | undefined}
+   */
   function afterRead(call) {
     if (!settings.readDedupe.enabled || call.isError) return undefined
     const path = call.args?.file_path
@@ -283,8 +399,18 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
       digest: createHash('sha1').update(text).digest('hex'),
     }
     const earlier = findUnchangedRead(reads, call.sessionId, read)
+    if (earlier !== undefined && settings.readDedupe.escapeHatch && earlier.pointed) {
+      // The model asked again after being shown a pointer: give it the real content.
+      rememberRead(reads, call.sessionId, { ...read, callId: call.callId ?? '' })
+      log.write({
+        type: 'tool', session: call.sessionId, tool: 'read', action: 'dedupe-refresh', path,
+        rawChars: text.length, outChars: text.length,
+      })
+      return undefined
+    }
     if (earlier !== undefined) {
-      const replacement = `[greenharness: this read returns the same lines as the earlier read of ${path} (call ${earlier}), which is still in context. Omitted to save tokens. Reuse that result.]`
+      markReadPointed(reads, call.sessionId, read)
+      const replacement = `[greenharness: this read returns the same lines as the earlier read of ${path} (call ${earlier.callId}), which is still in context. Omitted to save tokens. Reuse that result, or read the same range again to get the text.]`
       log.write({ type: 'tool', session: call.sessionId, tool: 'read', action: 'dedupe', path, rawChars: text.length, outChars: replacement.length })
       return { text: replacement }
     }
@@ -298,11 +424,27 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     const state = stateOf(call.sessionId)
     if (call.name === 'bash') return afterBash(call, state)
     if (call.name === 'read') return afterRead(call)
-    if ((call.name === 'edit' || call.name === 'write') && call.isError !== true) {
+
+    if (isProgressTool(call.name, settings.loopBreaker.progressTools) && call.isError !== true) {
       if (typeof call.args?.file_path === 'string') forgetPath(reads, call.sessionId, call.args.file_path)
       noteWorkspaceChange(state.loop)
     }
-    return undefined
+
+    const replacement = await distillReplacement(call, state)
+    if (replacement === undefined) {
+      if (settings.distill.tools.includes(call.name)) {
+        log.write({
+          type: 'tool', session: call.sessionId, tool: call.name, action: 'none',
+          rawChars: (call.text ?? '').length, outChars: (call.text ?? '').length,
+        })
+      }
+      return undefined
+    }
+    log.write({
+      type: 'tool', session: call.sessionId, tool: call.name, action: 'distill',
+      rawChars: (call.text ?? '').length, outChars: replacement.length,
+    })
+    return { text: replacement }
   }
 
   /**
@@ -322,7 +464,7 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
       const usage = event.data?.usage
       if (usage === undefined) return
       const route = state.route ?? tierRoute(state.cascade.tier) ?? { provider: '', model: '' }
-      const tier = tierOfRoute(route)
+      const tier = tierOfRoute(state, route)
       const wanted = state.intended
       state.intended = undefined
       if (wanted !== undefined && (wanted.provider !== route.provider || wanted.model !== route.model)) {
@@ -351,6 +493,18 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
     if (CONTEXT_REMOVAL_EVENTS.has(event.type)) clearSession(reads, sessionId)
   }
 
+  /**
+   * Drop everything remembered about one session. DSH disposes an agent when its session is
+   * closed or archived; without this the process would keep a cascade, a loop guard and a read
+   * index alive for every session it has ever seen.
+   * @param {string} sessionId
+   */
+  function forgetSession(sessionId) {
+    sessions.delete(sessionId)
+    clearSession(reads, sessionId)
+    if (latestTurn?.session === sessionId) latestTurn = undefined
+  }
+
   return {
     stats() { return { ...tally } },
     /** The newest call that ran on a different model than the plugin asked for, if the latest call did. */
@@ -361,12 +515,16 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
       lastError = `${stage}: ${error instanceof Error ? error.message : String(error)}`
     },
     lastError: () => lastError,
+    /** How many sessions currently hold state; surfaced by `/greenharness doctor`. */
+    sessionCount: () => sessions.size,
     beforeTool,
     afterTool,
     observeEvent,
     observeMessages,
+    preStep,
     routeForNextCall,
     notePin,
+    forgetSession,
     /**
      * A copy of the most recent turn's routing, for `/greenharness last` and the status line.
      * @returns {{ session: string, calls: number, models: Record<string, number>, tokens: number, tier?: string, verdict?: string, score?: number | null, plan: string[] } | undefined}
@@ -397,6 +555,7 @@ export function createGreenHarness(settings, { ledger, logger, classifier } = {}
  * @param {ReturnType<typeof distillOutput>} distilled
  * @param {string | undefined} hint
  * @param {string | undefined} nextTier
+ * @param {string | undefined} file
  */
 function composeDistilled(distilled, hint, nextTier, file) {
   const { stats } = distilled

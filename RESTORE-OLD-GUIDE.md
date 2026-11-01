@@ -1,5 +1,9 @@
 # Restore the old BEGINNER-GUIDE.md
 
+> **Historical document.** This was written against DSH `0.2.1-rc.2` and the former
+> `bench/BREV.md`, which this repo no longer ships. For current steps use `GETTING-STARTED.md`
+> and `BREV-SETUP.md`.
+
 `BEGINNER-GUIDE.md` was removed because `GETTING-STARTED.md` replaces it (shorter, no terminal knowledge needed).
 This file lets you undo that, in 3 steps.
 
